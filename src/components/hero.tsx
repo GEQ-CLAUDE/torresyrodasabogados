@@ -29,8 +29,8 @@ export async function Hero() {
           <Image
             src="/images/hero-logo.png"
             alt="Torres & Rodas Abogados"
-            width={260}
-            height={130}
+            width={172}
+            height={104}
             style={{ width: "auto", height: "auto" }}
             className="h-[130px] max-sm:h-[90px] object-contain"
             priority

@@ -13,8 +13,8 @@ export async function Nav() {
         <Image
           src="/images/nav-logo.png"
           alt="Torres & Rodas Abogados"
-          width={150}
-          height={50}
+          width={172}
+          height={104}
           style={{ width: "auto", height: "50px" }}
           className="object-contain"
           priority
