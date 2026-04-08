@@ -1,0 +1,33 @@
+name: Deploy to Vercel
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      VERCEL_TOKEN: ${{ secrets.VERCEL_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Vercel CLI
+        run: npm install -g vercel
+
+      - name: Link Vercel project
+        run: vercel link --yes --token=$VERCEL_TOKEN
+
+      - name: Set booking URL env var
+        if: ${{ vars.BOOKING_APP_URL != '' }}
+        run: |
+          vercel env rm NEXT_PUBLIC_BOOKING_URL production --yes --token=$VERCEL_TOKEN 2>/dev/null || true
+          echo "${{ vars.BOOKING_APP_URL }}" | vercel env add NEXT_PUBLIC_BOOKING_URL production --token=$VERCEL_TOKEN
+
+      - name: Deploy to production
+        run: vercel --prod --yes --token=$VERCEL_TOKEN
