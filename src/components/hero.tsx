@@ -57,7 +57,7 @@ export async function Hero() {
 
         <div className="flex gap-4 flex-wrap justify-center">
           <a
-            href="#contacto"
+            href={process.env.NEXT_PUBLIC_BOOKING_URL ?? "/booking"}
             className="bg-gold text-navy-deep px-9 py-4 text-xs font-semibold tracking-[0.14em] uppercase no-underline hover:bg-gold-light transition-all inline-block"
           >
             {t("ctaPrimary")}

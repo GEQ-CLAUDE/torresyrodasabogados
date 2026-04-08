@@ -39,7 +39,7 @@ export async function Nav() {
       <div className="flex items-center gap-6">
         <LanguageSwitcher />
         <a
-          href="#contacto"
+          href={process.env.NEXT_PUBLIC_BOOKING_URL ?? "/booking"}
           className="hidden sm:inline-block border border-gold text-gold-light px-6 py-2.5 text-xs font-medium tracking-[0.12em] uppercase hover:bg-gold hover:text-navy-deep transition-all no-underline whitespace-nowrap"
         >
           {t("cta")}
