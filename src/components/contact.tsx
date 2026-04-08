@@ -62,8 +62,13 @@ export async function Contact() {
                 {t("phoneLabel")}
               </div>
               <div className="text-[15px] font-light text-white/80">
-                <a href="https://wa.me/593997834718" className="text-gold-light no-underline hover:underline">
+                <a href="https://wa.me/593995985515" className="text-gold-light no-underline hover:underline">
                   {t("phone")}
+                </a>
+              </div>
+              <div className="text-[15px] font-light text-white/80 mt-1">
+                <a href="https://wa.me/593984365799" className="text-gold-light no-underline hover:underline">
+                  {t("phone2")}
                 </a>
               </div>
             </div>
