@@ -44,7 +44,12 @@ export function useConversations(locale: "es" | "en") {
   const [isSearching, setIsSearching] = useState(false);
   const [pendingAttachments, setPendingAttachments] = useState<AttachedFile[]>([]);
   const [uploadError, setUploadError] = useState<string | null>(null);
+
+  // Refs to avoid stale closures inside async streaming callbacks
   const abortRef = useRef<AbortController | null>(null);
+  const activeIdRef = useRef<string | null>(null);
+  const localeRef = useRef(locale);
+  localeRef.current = locale;
 
   // Load from localStorage on mount
   useEffect(() => {
@@ -52,15 +57,12 @@ export function useConversations(locale: "es" | "en") {
     setConversations(stored);
     if (stored.length > 0) {
       setActiveId(stored[0].id);
+      activeIdRef.current = stored[0].id;
     }
   }, []);
 
-  const persistAndSet = useCallback((updated: Conversation[]) => {
-    setConversations(updated);
-    saveConversations(updated);
-  }, []);
-
-  const activeConversation = conversations.find((c) => c.id === activeId) ?? null;
+  const activeConversation =
+    conversations.find((c) => c.id === activeId) ?? null;
 
   const newConversation = useCallback(
     (caseRef: string, area: PracticeArea): string => {
@@ -74,41 +76,51 @@ export function useConversations(locale: "es" | "en") {
         createdAt: now,
         updatedAt: now,
       };
-      persistAndSet([conv, ...conversations]);
+      setConversations((prev) => {
+        const updated = [conv, ...prev];
+        saveConversations(updated);
+        return updated;
+      });
       setActiveId(id);
+      activeIdRef.current = id;
       return id;
     },
-    [conversations, persistAndSet]
+    []
   );
 
   const setActive = useCallback((id: string) => {
     setActiveId(id);
+    activeIdRef.current = id;
     setStreamingContent("");
     setIsStreaming(false);
     setIsSearching(false);
   }, []);
 
-  const deleteConversation = useCallback(
-    (id: string) => {
-      const updated = conversations.filter((c) => c.id !== id);
-      persistAndSet(updated);
-      if (activeId === id) {
-        setActiveId(updated.length > 0 ? updated[0].id : null);
-      }
-    },
-    [conversations, persistAndSet, activeId]
-  );
+  const deleteConversation = useCallback((id: string) => {
+    setConversations((prev) => {
+      const updated = prev.filter((c) => c.id !== id);
+      saveConversations(updated);
+      return updated;
+    });
+    setActiveId((prev) => {
+      if (prev !== id) return prev;
+      // activate first remaining
+      const remaining = conversations.filter((c) => c.id !== id);
+      const next = remaining.length > 0 ? remaining[0].id : null;
+      activeIdRef.current = next;
+      return next;
+    });
+  }, [conversations]);
 
   const uploadFile = useCallback(async (file: File): Promise<void> => {
     setUploadError(null);
     const formData = new FormData();
     formData.append("file", file);
-
     try {
       const res = await fetch("/api/upload", { method: "POST", body: formData });
       if (!res.ok) {
         const err = await res.json();
-        setUploadError(err.error ?? "Error al subir el archivo");
+        setUploadError((err as { error?: string }).error ?? "Error al subir el archivo");
         return;
       }
       const attached: AttachedFile = await res.json();
@@ -124,7 +136,9 @@ export function useConversations(locale: "es" | "en") {
 
   const sendMessage = useCallback(
     async (content: string): Promise<void> => {
-      if (!activeConversation || isStreaming) return;
+      // Read current values via functional state updates to avoid stale closures
+      const currentId = activeIdRef.current;
+      if (!currentId) return;
       if (!content.trim() && pendingAttachments.length === 0) return;
 
       // Abort any in-flight request
@@ -132,23 +146,42 @@ export function useConversations(locale: "es" | "en") {
       const controller = new AbortController();
       abortRef.current = controller;
 
+      // Capture attachments and clear queue
+      const attachmentsSnapshot = [...pendingAttachments];
+      setPendingAttachments([]);
+
+      // Read the active conversation at send time
+      let activeConv: Conversation | undefined;
+      setConversations((prev) => {
+        activeConv = prev.find((c) => c.id === currentId);
+        return prev; // no change yet
+      });
+
+      // Small synchronous pause to let setConversations read complete
+      await Promise.resolve();
+
+      if (!activeConv) return;
+
       const userMessage: ChatMessage = {
         id: randomId(),
         role: "user",
         content: content.trim(),
         timestamp: Date.now(),
-        attachments: pendingAttachments.length > 0 ? [...pendingAttachments] : undefined,
+        attachments: attachmentsSnapshot.length > 0 ? attachmentsSnapshot : undefined,
       };
 
-      // Optimistically add user message and clear attachments
-      const messagesWithUser = [...activeConversation.messages, userMessage];
-      const updatedConvs = conversations.map((c) =>
-        c.id === activeId
-          ? { ...c, messages: messagesWithUser, updatedAt: Date.now() }
-          : c
-      );
-      persistAndSet(updatedConvs);
-      setPendingAttachments([]);
+      const messagesWithUser = [...activeConv.messages, userMessage];
+
+      // Optimistically commit user message
+      setConversations((prev) => {
+        const updated = prev.map((c) =>
+          c.id === currentId
+            ? { ...c, messages: messagesWithUser, updatedAt: Date.now() }
+            : c
+        );
+        saveConversations(updated);
+        return updated;
+      });
 
       setIsStreaming(true);
       setIsSearching(false);
@@ -160,8 +193,8 @@ export function useConversations(locale: "es" | "en") {
             role: m.role,
             content: m.content,
           })),
-          practiceArea: activeConversation.practiceArea,
-          locale,
+          practiceArea: activeConv.practiceArea,
+          locale: localeRef.current,
           attachments: userMessage.attachments,
         };
 
@@ -172,14 +205,13 @@ export function useConversations(locale: "es" | "en") {
           signal: controller.signal,
         });
 
-        if (!res.ok || !res.body) {
-          throw new Error(`HTTP ${res.status}`);
-        }
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let assembled = "";
         const SEARCH_SIGNAL = "\x00SEARCHING\x00";
+        let searching = false;
 
         while (true) {
           const { done, value } = await reader.read();
@@ -188,15 +220,20 @@ export function useConversations(locale: "es" | "en") {
           const chunk = decoder.decode(value, { stream: true });
 
           if (chunk.includes(SEARCH_SIGNAL)) {
-            setIsSearching(true);
-            // Strip the signal marker from displayed text
+            if (!searching) {
+              searching = true;
+              setIsSearching(true);
+            }
             const cleaned = chunk.replace(new RegExp(SEARCH_SIGNAL, "g"), "");
             if (cleaned) {
               assembled += cleaned;
               setStreamingContent(assembled);
             }
           } else {
-            if (isSearching) setIsSearching(false);
+            if (searching) {
+              searching = false;
+              setIsSearching(false);
+            }
             assembled += chunk;
             setStreamingContent(assembled);
           }
@@ -210,19 +247,9 @@ export function useConversations(locale: "es" | "en") {
           timestamp: Date.now(),
         };
 
-        const finalConvs = conversations.map((c) =>
-          c.id === activeId
-            ? {
-                ...c,
-                messages: [...messagesWithUser, assistantMessage],
-                updatedAt: Date.now(),
-              }
-            : c
-        );
-        // Re-read latest conversations to avoid stale closure
         setConversations((prev) => {
-          const result = prev.map((c) =>
-            c.id === activeId
+          const updated = prev.map((c) =>
+            c.id === currentId
               ? {
                   ...c,
                   messages: [...messagesWithUser, assistantMessage],
@@ -230,24 +257,23 @@ export function useConversations(locale: "es" | "en") {
                 }
               : c
           );
-          saveConversations(result);
-          return result;
+          saveConversations(updated);
+          return updated;
         });
-        void finalConvs; // suppress unused warning
       } catch (err) {
         if ((err as Error).name !== "AbortError") {
           const errorMessage: ChatMessage = {
             id: randomId(),
             role: "assistant",
             content:
-              locale === "es"
+              localeRef.current === "es"
                 ? "Lo siento, ocurrió un error al procesar su consulta. Por favor, inténtelo nuevamente."
                 : "Sorry, an error occurred while processing your query. Please try again.",
             timestamp: Date.now(),
           };
           setConversations((prev) => {
-            const result = prev.map((c) =>
-              c.id === activeId
+            const updated = prev.map((c) =>
+              c.id === currentId
                 ? {
                     ...c,
                     messages: [...messagesWithUser, errorMessage],
@@ -255,8 +281,8 @@ export function useConversations(locale: "es" | "en") {
                   }
                 : c
             );
-            saveConversations(result);
-            return result;
+            saveConversations(updated);
+            return updated;
           });
         }
       } finally {
@@ -265,16 +291,7 @@ export function useConversations(locale: "es" | "en") {
         setStreamingContent("");
       }
     },
-    [
-      activeConversation,
-      activeId,
-      conversations,
-      isStreaming,
-      isSearching,
-      locale,
-      pendingAttachments,
-      persistAndSet,
-    ]
+    [pendingAttachments]
   );
 
   return {

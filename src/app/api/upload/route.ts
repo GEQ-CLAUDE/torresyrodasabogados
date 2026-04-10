@@ -1,8 +1,8 @@
 import { NextRequest } from "next/server";
 
-// pdf-parse is CJS — require avoids ESM/CJS mismatch in bundler moduleResolution
+// Import from lib/ directly to avoid pdf-parse v1's test-runner side-effect on require()
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const pdfParse = require("pdf-parse") as (
+const pdfParse = require("pdf-parse/lib/pdf-parse") as (
   buf: Buffer,
   opts?: { max?: number }
 ) => Promise<{ text: string; numpages: number }>;
